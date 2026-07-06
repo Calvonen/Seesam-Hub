@@ -47,6 +47,7 @@ class WorkerManager:
             send_magic_packet(self.mac_address)
         except RuntimeError as exc:
             raise WorkerManagerError(str(exc)) from exc
+        self.mark_used()
 
     def wait_until_online(
         self,
@@ -94,3 +95,56 @@ class WorkerManager:
 
     def mark_used(self) -> None:
         self.last_used_at = datetime.now(timezone.utc)
+
+    def seconds_since_last_used(self) -> int | None:
+        if self.last_used_at is None:
+            return None
+
+        elapsed_seconds = (datetime.now(timezone.utc) - self.last_used_at).total_seconds()
+        return max(0, int(elapsed_seconds))
+
+    def is_idle(self) -> bool:
+        seconds_since_last_used = self.seconds_since_last_used()
+        if seconds_since_last_used is None:
+            return False
+
+        return seconds_since_last_used >= self.idle_timeout_seconds
+
+    def shutdown_if_idle(self) -> dict[str, object]:
+        if not self.is_online():
+            logger.info("Skipping idle shutdown because worker is offline")
+            return {"status": "offline"}
+
+        seconds_since_last_used = self.seconds_since_last_used()
+        if seconds_since_last_used is None:
+            logger.info("Skipping idle shutdown because worker usage is not tracked yet")
+            return {
+                "status": "not_tracked",
+                "idle": False,
+                "remaining_seconds": None,
+            }
+
+        remaining_seconds = max(0, self.idle_timeout_seconds - seconds_since_last_used)
+        if remaining_seconds > 0:
+            logger.info(
+                "Skipping idle shutdown because worker is not idle",
+                extra={
+                    "worker_host": self.host,
+                    "remaining_seconds": remaining_seconds,
+                },
+            )
+            return {
+                "status": "active",
+                "idle": False,
+                "seconds_since_last_used": seconds_since_last_used,
+                "remaining_seconds": remaining_seconds,
+            }
+
+        logger.info("Worker is idle, shutting down", extra={"worker_host": self.host})
+        self.shutdown()
+        return {
+            "status": "shutdown_sent",
+            "idle": True,
+            "seconds_since_last_used": seconds_since_last_used,
+            "remaining_seconds": 0,
+        }

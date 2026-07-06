@@ -68,3 +68,47 @@ def shutdown_worker() -> dict[str, str]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"status": "shutdown_sent"}
+
+
+@app.post("/worker/used")
+def mark_worker_used() -> dict[str, object]:
+    worker_manager.mark_used()
+    return {
+        "status": "marked_used",
+        "last_used_at": (
+            worker_manager.last_used_at.isoformat()
+            if worker_manager.last_used_at
+            else None
+        ),
+    }
+
+
+@app.get("/worker/idle")
+def worker_idle() -> dict[str, object]:
+    seconds_since_last_used = worker_manager.seconds_since_last_used()
+    remaining_seconds = (
+        max(0, worker_manager.idle_timeout_seconds - seconds_since_last_used)
+        if seconds_since_last_used is not None
+        else None
+    )
+
+    return {
+        "online": worker_manager.is_online(),
+        "idle": worker_manager.is_idle(),
+        "last_used_at": (
+            worker_manager.last_used_at.isoformat()
+            if worker_manager.last_used_at
+            else None
+        ),
+        "seconds_since_last_used": seconds_since_last_used,
+        "remaining_seconds": remaining_seconds,
+        "idle_timeout_seconds": worker_manager.idle_timeout_seconds,
+    }
+
+
+@app.post("/worker/shutdown-if-idle")
+def shutdown_worker_if_idle() -> dict[str, object]:
+    try:
+        return worker_manager.shutdown_if_idle()
+    except WorkerManagerError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
