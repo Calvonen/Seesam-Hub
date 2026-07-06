@@ -2,11 +2,25 @@ from datetime import datetime
 import socket
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
+from services.intent_router import (
+    UNKNOWN_INTENT,
+    WORKER_MARK_USED,
+    WORKER_SHUTDOWN,
+    WORKER_STATUS,
+    WORKER_WAKE,
+    IntentRouter,
+)
 from services.worker_manager import WorkerManager, WorkerManagerError
 
 app = FastAPI(title="Seesam Hub")
 worker_manager = WorkerManager()
+intent_router = IntentRouter()
+
+
+class IntentRequest(BaseModel):
+    text: str
 
 
 @app.get("/")
@@ -112,3 +126,56 @@ def shutdown_worker_if_idle() -> dict[str, object]:
         return worker_manager.shutdown_if_idle()
     except WorkerManagerError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/intent")
+def route_intent(request: IntentRequest) -> dict[str, object]:
+    intent = intent_router.route(request.text)
+
+    try:
+        action_result = _run_intent_action(intent)
+    except WorkerManagerError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "intent": intent,
+        "action_result": action_result,
+    }
+
+
+def _run_intent_action(intent: str) -> dict[str, object]:
+    if intent == WORKER_WAKE:
+        worker_manager.wake()
+        return {"status": "wake_sent"}
+
+    if intent == WORKER_SHUTDOWN:
+        worker_manager.shutdown()
+        return {"status": "shutdown_sent"}
+
+    if intent == WORKER_STATUS:
+        return {
+            "host": worker_manager.host,
+            "online": worker_manager.is_online(),
+            "last_used_at": (
+                worker_manager.last_used_at.isoformat()
+                if worker_manager.last_used_at
+                else None
+            ),
+            "idle_timeout_seconds": worker_manager.idle_timeout_seconds,
+        }
+
+    if intent == WORKER_MARK_USED:
+        worker_manager.mark_used()
+        return {
+            "status": "marked_used",
+            "last_used_at": (
+                worker_manager.last_used_at.isoformat()
+                if worker_manager.last_used_at
+                else None
+            ),
+        }
+
+    if intent == UNKNOWN_INTENT:
+        return {"status": "unknown_intent"}
+
+    return {"status": "unsupported_intent"}
