@@ -141,7 +141,7 @@ class HealthManager:
         update_lines = [
             line
             for line in result.stdout.splitlines()
-            if line and not line.startswith("Listing...")
+            if line and "/" in line
         ]
         return len(update_lines)
 
