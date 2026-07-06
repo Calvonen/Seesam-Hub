@@ -12,11 +12,13 @@ from services.intent_router import (
     WORKER_WAKE,
     IntentRouter,
 )
+from services.health_manager import HealthManager
 from services.worker_manager import WorkerManager, WorkerManagerError
 
 app = FastAPI(title="Seesam Hub")
 worker_manager = WorkerManager()
 intent_router = IntentRouter()
+health_manager = HealthManager(worker_manager)
 
 
 class IntentRequest(BaseModel):
@@ -53,6 +55,11 @@ def status() -> dict[str, object]:
             "idle_timeout_seconds": worker_manager.idle_timeout_seconds,
         },
     }
+
+
+@app.get("/health")
+def health() -> dict[str, object]:
+    return health_manager.get_health()
 
 
 @app.post("/worker/wake")
