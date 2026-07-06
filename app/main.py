@@ -1,0 +1,70 @@
+from datetime import datetime
+import socket
+
+from fastapi import FastAPI, HTTPException
+
+from services.worker_manager import WorkerManager, WorkerManagerError
+
+app = FastAPI(title="Seesam Hub")
+worker_manager = WorkerManager()
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "name": "Seesam Hub",
+        "status": "running",
+        "host": socket.gethostname(),
+        "time": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+@app.get("/status")
+def status() -> dict[str, object]:
+    worker_online = worker_manager.is_online()
+    return {
+        "hub": {
+            "status": "ok",
+            "host": socket.gethostname(),
+            "time": datetime.now().isoformat(timespec="seconds"),
+        },
+        "worker": {
+            "host": worker_manager.host,
+            "online": worker_online,
+            "last_used_at": (
+                worker_manager.last_used_at.isoformat()
+                if worker_manager.last_used_at
+                else None
+            ),
+            "idle_timeout_seconds": worker_manager.idle_timeout_seconds,
+        },
+    }
+
+
+@app.post("/worker/wake")
+def wake_worker() -> dict[str, str]:
+    try:
+        worker_manager.wake()
+    except WorkerManagerError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"status": "wake_sent"}
+
+
+@app.post("/worker/wait-online")
+def wait_worker_online() -> dict[str, object]:
+    online = worker_manager.wait_until_online()
+    if not online:
+        raise HTTPException(status_code=504, detail="worker did not become online in time")
+
+    return {"status": "online", "online": True}
+
+
+@app.post("/worker/shutdown")
+def shutdown_worker() -> dict[str, str]:
+    try:
+        worker_manager.shutdown()
+    except WorkerManagerError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"status": "shutdown_sent"}
