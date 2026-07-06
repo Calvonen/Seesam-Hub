@@ -13,6 +13,7 @@ from services.intent_router import (
     IntentRouter,
 )
 from services.health_manager import HealthManager
+from services.dashboard_manager import DashboardManager
 from services.worker_manager import WorkerManager, WorkerManagerError
 from services.update_manager import UpdateManager
 
@@ -21,6 +22,11 @@ worker_manager = WorkerManager()
 intent_router = IntentRouter()
 health_manager = HealthManager(worker_manager)
 update_manager = UpdateManager()
+dashboard_manager = DashboardManager(
+    health_manager=health_manager,
+    update_manager=update_manager,
+    worker_manager=worker_manager,
+)
 
 
 class IntentRequest(BaseModel):
@@ -67,6 +73,11 @@ def health() -> dict[str, object]:
 @app.get("/updates")
 def updates() -> dict[str, object]:
     return update_manager.get_update_status()
+
+
+@app.get("/dashboard")
+def dashboard() -> dict[str, object]:
+    return dashboard_manager.get_dashboard()
 
 
 @app.post("/worker/wake")
