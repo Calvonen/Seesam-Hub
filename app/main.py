@@ -14,11 +14,13 @@ from services.intent_router import (
 )
 from services.health_manager import HealthManager
 from services.worker_manager import WorkerManager, WorkerManagerError
+from services.update_manager import UpdateManager
 
 app = FastAPI(title="Seesam Hub")
 worker_manager = WorkerManager()
 intent_router = IntentRouter()
 health_manager = HealthManager(worker_manager)
+update_manager = UpdateManager()
 
 
 class IntentRequest(BaseModel):
@@ -60,6 +62,11 @@ def status() -> dict[str, object]:
 @app.get("/health")
 def health() -> dict[str, object]:
     return health_manager.get_health()
+
+
+@app.get("/updates")
+def updates() -> dict[str, object]:
+    return update_manager.get_update_status()
 
 
 @app.post("/worker/wake")
