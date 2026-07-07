@@ -1,6 +1,9 @@
 import unittest
 
 from services.intent_router import (
+    SPEAKER_POWER_OFF,
+    SPEAKER_POWER_ON,
+    SPEAKER_STATUS,
     UNKNOWN_INTENT,
     WORKER_MARK_USED,
     WORKER_SHUTDOWN,
@@ -50,6 +53,36 @@ class IntentRouterTests(unittest.TestCase):
             self.router.route("merkkaa worker käytetyksi"),
             WORKER_MARK_USED,
         )
+
+    def test_detects_speaker_power_on(self) -> None:
+        phrases = (
+            "kaiuttimet päälle",
+            "käynnistä kaiuttimet",
+        )
+
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.router.route(phrase), SPEAKER_POWER_ON)
+
+    def test_detects_speaker_power_off(self) -> None:
+        phrases = (
+            "kaiuttimet pois",
+            "sammuta kaiuttimet",
+        )
+
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.router.route(phrase), SPEAKER_POWER_OFF)
+
+    def test_detects_speaker_power_status(self) -> None:
+        phrases = (
+            "kaiuttimien tila",
+            "onko kaiuttimet päällä",
+        )
+
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.router.route(phrase), SPEAKER_STATUS)
 
     def test_unknown_when_no_rule_matches(self) -> None:
         self.assertEqual(self.router.route("soita musiikkia"), UNKNOWN_INTENT)
