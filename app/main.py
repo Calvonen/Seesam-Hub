@@ -1,7 +1,9 @@
 from datetime import datetime
 import socket
+from collections.abc import Mapping
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from services.intent_router import (
@@ -31,6 +33,20 @@ dashboard_manager = DashboardManager(
 
 class IntentRequest(BaseModel):
     text: str
+
+
+WORKER_API_PORT = 8000
+WORKER_PROXY_TIMEOUT_SECONDS = 60.0
+HOP_BY_HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 @app.get("/")
@@ -165,6 +181,70 @@ def route_intent(request: IntentRequest) -> dict[str, object]:
     return {
         "intent": intent,
         "action_result": action_result,
+    }
+
+
+@app.post("/chat")
+async def proxy_chat(request: Request) -> Response:
+    payload = await request.json()
+    return await _proxy_worker_json("/chat", payload)
+
+
+@app.post("/speak")
+async def proxy_speak(request: Request) -> Response:
+    payload = await request.json()
+    return await _proxy_worker_json("/speak", payload)
+
+
+@app.post("/transcribe")
+async def proxy_transcribe(request: Request) -> Response:
+    body = await request.body()
+    content_type = request.headers.get("content-type")
+    headers = {"content-type": content_type} if content_type else None
+    return await _proxy_worker_request("/transcribe", content=body, headers=headers)
+
+
+async def _proxy_worker_json(endpoint: str, payload: object) -> Response:
+    return await _proxy_worker_request(endpoint, json=payload)
+
+
+async def _proxy_worker_request(
+    endpoint: str,
+    *,
+    json: object | None = None,
+    content: bytes | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> Response:
+    try:
+        async with httpx.AsyncClient(timeout=WORKER_PROXY_TIMEOUT_SECONDS) as client:
+            worker_response = await client.post(
+                _worker_api_url(endpoint),
+                json=json,
+                content=content,
+                headers=headers,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="worker did not respond") from exc
+
+    if worker_response.is_success:
+        worker_manager.mark_used()
+
+    return Response(
+        content=worker_response.content,
+        status_code=worker_response.status_code,
+        headers=_response_headers(worker_response.headers),
+    )
+
+
+def _worker_api_url(endpoint: str) -> str:
+    return f"http://{worker_manager.host}:{WORKER_API_PORT}{endpoint}"
+
+
+def _response_headers(headers: httpx.Headers) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "content-length"
     }
 
 
