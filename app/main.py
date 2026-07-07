@@ -7,6 +7,9 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from services.intent_router import (
+    SPEAKER_POWER_OFF,
+    SPEAKER_POWER_ON,
+    SPEAKER_STATUS,
     UNKNOWN_INTENT,
     WORKER_MARK_USED,
     WORKER_SHUTDOWN,
@@ -16,11 +19,13 @@ from services.intent_router import (
 )
 from services.health_manager import HealthManager
 from services.dashboard_manager import DashboardManager
+from services.shelly_manager import ShellyManager
 from services.worker_manager import WorkerManager, WorkerManagerError
 from services.update_manager import UpdateManager
 
 app = FastAPI(title="Seesam Hub")
 worker_manager = WorkerManager()
+speaker_shelly_manager = ShellyManager()
 intent_router = IntentRouter()
 health_manager = HealthManager(worker_manager)
 update_manager = UpdateManager()
@@ -169,6 +174,21 @@ def shutdown_worker_if_idle() -> dict[str, object]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/speakers/power-on")
+def turn_speaker_power_on() -> dict[str, object]:
+    return _shelly_response_or_502(speaker_shelly_manager.turn_speaker_power_on())
+
+
+@app.post("/speakers/power-off")
+def turn_speaker_power_off() -> dict[str, object]:
+    return _shelly_response_or_502(speaker_shelly_manager.turn_speaker_power_off())
+
+
+@app.get("/speakers/status")
+def get_speaker_status() -> dict[str, object]:
+    return _shelly_response_or_502(speaker_shelly_manager.get_speaker_power_status())
+
+
 @app.post("/intent")
 def route_intent(request: IntentRequest) -> dict[str, object]:
     intent = intent_router.route(request.text)
@@ -249,6 +269,15 @@ def _response_headers(headers: httpx.Headers) -> dict[str, str]:
 
 
 def _run_intent_action(intent: str) -> dict[str, object]:
+    if intent == SPEAKER_POWER_ON:
+        return _shelly_response_or_502(speaker_shelly_manager.turn_speaker_power_on())
+
+    if intent == SPEAKER_POWER_OFF:
+        return _shelly_response_or_502(speaker_shelly_manager.turn_speaker_power_off())
+
+    if intent == SPEAKER_STATUS:
+        return _shelly_response_or_502(speaker_shelly_manager.get_speaker_power_status())
+
     if intent == WORKER_WAKE:
         worker_manager.wake()
         return {"status": "wake_sent"}
@@ -284,3 +313,10 @@ def _run_intent_action(intent: str) -> dict[str, object]:
         return {"status": "unknown_intent"}
 
     return {"status": "unsupported_intent"}
+
+
+def _shelly_response_or_502(result: dict[str, object]) -> dict[str, object]:
+    if result.get("ok") is False:
+        raise HTTPException(status_code=502, detail=result)
+
+    return result
