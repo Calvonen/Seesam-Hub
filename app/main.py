@@ -143,6 +143,22 @@ def mark_worker_used() -> dict[str, object]:
     }
 
 
+@app.post("/intercom/button")
+async def intercom_button_pressed() -> dict[str, object]:
+    worker_manager.mark_used()
+    return {
+        "ok": True,
+        "source": "intercom",
+        "action": "button_pressed",
+        "worker_host": worker_manager.host,
+        "last_used_at": (
+            worker_manager.last_used_at.isoformat()
+            if worker_manager.last_used_at
+            else None
+        ),
+    }
+
+
 @app.get("/worker/idle")
 def worker_idle() -> dict[str, object]:
     seconds_since_last_used = worker_manager.seconds_since_last_used()
