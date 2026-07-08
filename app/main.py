@@ -145,12 +145,17 @@ def mark_worker_used() -> dict[str, object]:
 
 @app.post("/intercom/button")
 async def intercom_button_pressed() -> dict[str, object]:
-    worker_manager.mark_used()
     worker_online = worker_manager.is_online()
 
     if worker_online:
-        action = "worker_ready"
+        listen_started = await _request_worker_listen_start()
+        if not listen_started:
+            raise HTTPException(status_code=502, detail="worker listen start failed")
+
+        worker_manager.mark_used()
+        action = "listen_start_requested"
     else:
+        worker_manager.mark_used()
         try:
             worker_manager.wake()
         except WorkerManagerError as exc:
@@ -169,6 +174,16 @@ async def intercom_button_pressed() -> dict[str, object]:
             else None
         ),
     }
+
+
+async def _request_worker_listen_start() -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=WORKER_PROXY_TIMEOUT_SECONDS) as client:
+            worker_response = await client.post(_worker_api_url("/listen/start"))
+    except httpx.RequestError:
+        return False
+
+    return worker_response.is_success
 
 
 @app.get("/worker/idle")
