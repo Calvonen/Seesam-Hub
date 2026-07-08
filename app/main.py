@@ -146,11 +146,23 @@ def mark_worker_used() -> dict[str, object]:
 @app.post("/intercom/button")
 async def intercom_button_pressed() -> dict[str, object]:
     worker_manager.mark_used()
+    worker_online = worker_manager.is_online()
+
+    if worker_online:
+        action = "worker_ready"
+    else:
+        try:
+            worker_manager.wake()
+        except WorkerManagerError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        action = "wake_sent"
+
     return {
         "ok": True,
         "source": "intercom",
-        "action": "button_pressed",
+        "action": action,
         "worker_host": worker_manager.host,
+        "worker_online": worker_online,
         "last_used_at": (
             worker_manager.last_used_at.isoformat()
             if worker_manager.last_used_at
