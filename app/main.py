@@ -190,6 +190,25 @@ async def get_intercom_listening_status() -> dict[str, object]:
     return {**result, "worker_online": True}
 
 
+@app.get("/intercom/listen/last-audio")
+async def get_intercom_last_audio() -> Response:
+    if not worker_manager.is_online():
+        raise HTTPException(status_code=503, detail="worker_offline")
+
+    try:
+        async with httpx.AsyncClient(timeout=WORKER_PROXY_TIMEOUT_SECONDS) as client:
+            worker_response = await client.get(_worker_api_url("/listen/last-audio"))
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="worker did not respond") from exc
+
+    if worker_response.status_code == 404:
+        return Response(status_code=404)
+    if not worker_response.is_success:
+        raise HTTPException(status_code=502, detail="worker audio request failed")
+
+    return Response(content=worker_response.content, media_type="audio/wav")
+
+
 async def _start_intercom_listening() -> dict[str, object]:
     if worker_manager.is_online():
         result = await _request_worker_listen("POST", "/listen/start")

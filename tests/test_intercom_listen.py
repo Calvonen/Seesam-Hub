@@ -101,6 +101,43 @@ class IntercomListenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"worker_online": False})
 
+    def test_last_audio_worker_online_returns_wav(self) -> None:
+        wav_bytes = b"RIFF\x24\x00\x00\x00WAVEfmt "
+        FakeWorkerAsyncClient.response = httpx.Response(
+            200, content=wav_bytes, headers={"content-type": "audio/wav"}
+        )
+
+        response = self._request_with_worker_online(
+            "GET", "/intercom/listen/last-audio"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "audio/wav")
+        self.assertEqual(response.content, wav_bytes)
+        self.assertEqual(FakeWorkerAsyncClient.request_method, "GET")
+        self.assertEqual(
+            FakeWorkerAsyncClient.request_url,
+            "http://worker.local:8000/listen/last-audio",
+        )
+
+    def test_last_audio_worker_online_without_audio_returns_404(self) -> None:
+        FakeWorkerAsyncClient.response = httpx.Response(404)
+
+        response = self._request_with_worker_online(
+            "GET", "/intercom/listen/last-audio"
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_last_audio_worker_offline_returns_503(self) -> None:
+        with patch.object(main.worker_manager, "is_online", return_value=False):
+            response = asyncio.run(
+                self._request("GET", "/intercom/listen/last-audio")
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "worker_offline")
+
     def _request_with_worker_online(self, method: str, path: str) -> httpx.Response:
         with patch.object(main.worker_manager, "is_online", return_value=True), patch(
             "app.main.httpx.AsyncClient", FakeWorkerAsyncClient
