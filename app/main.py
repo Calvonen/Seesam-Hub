@@ -145,29 +145,19 @@ def mark_worker_used() -> dict[str, object]:
 
 @app.post("/intercom/button")
 async def intercom_button_pressed() -> dict[str, object]:
-    worker_online = worker_manager.is_online()
+    result = await _start_intercom_listening()
 
-    if worker_online:
-        listen_started = await _request_worker_listen_start()
-        if not listen_started:
-            raise HTTPException(status_code=502, detail="worker listen start failed")
-
-        worker_manager.mark_used()
+    if result["worker_online"]:
         action = "listen_start_requested"
     else:
-        worker_manager.mark_used()
-        try:
-            worker_manager.wake()
-        except WorkerManagerError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        action = "wake_sent"
+        action = result["action"]
 
     return {
         "ok": True,
         "source": "intercom",
         "action": action,
         "worker_host": worker_manager.host,
-        "worker_online": worker_online,
+        "worker_online": result["worker_online"],
         "last_used_at": (
             worker_manager.last_used_at.isoformat()
             if worker_manager.last_used_at
@@ -176,14 +166,61 @@ async def intercom_button_pressed() -> dict[str, object]:
     }
 
 
-async def _request_worker_listen_start() -> bool:
+@app.post("/intercom/listen/start")
+async def start_intercom_listening() -> dict[str, object]:
+    return await _start_intercom_listening()
+
+
+@app.post("/intercom/listen/stop")
+async def stop_intercom_listening() -> dict[str, object]:
+    if not worker_manager.is_online():
+        raise HTTPException(status_code=503, detail="worker_offline")
+
+    result = await _request_worker_listen("POST", "/listen/stop")
+    worker_manager.mark_used()
+    return {**result, "worker_online": True}
+
+
+@app.get("/intercom/listen/status")
+async def get_intercom_listening_status() -> dict[str, object]:
+    if not worker_manager.is_online():
+        return {"worker_online": False}
+
+    result = await _request_worker_listen("GET", "/listen/status")
+    return {**result, "worker_online": True}
+
+
+async def _start_intercom_listening() -> dict[str, object]:
+    if worker_manager.is_online():
+        result = await _request_worker_listen("POST", "/listen/start")
+        worker_manager.mark_used()
+        return {**result, "worker_online": True}
+
+    worker_manager.mark_used()
+    try:
+        worker_manager.wake()
+    except WorkerManagerError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"action": "wake_sent", "worker_online": False}
+
+
+async def _request_worker_listen(method: str, endpoint: str) -> dict[str, object]:
     try:
         async with httpx.AsyncClient(timeout=WORKER_PROXY_TIMEOUT_SECONDS) as client:
-            worker_response = await client.post(_worker_api_url("/listen/start"))
-    except httpx.RequestError:
-        return False
+            if method == "GET":
+                worker_response = await client.get(_worker_api_url(endpoint))
+            else:
+                worker_response = await client.post(_worker_api_url(endpoint))
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="worker did not respond") from exc
 
-    return worker_response.is_success
+    if not worker_response.is_success:
+        raise HTTPException(status_code=502, detail="worker listen request failed")
+
+    result = worker_response.json()
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="invalid worker response")
+    return result
 
 
 @app.get("/worker/idle")

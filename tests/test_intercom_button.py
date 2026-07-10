@@ -10,7 +10,7 @@ ORIGINAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
 class FakeWorkerAsyncClient:
-    response = httpx.Response(200, json={"ok": True})
+    response = httpx.Response(200, json={"action": "listening_started"})
     request_url: str | None = None
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -31,7 +31,9 @@ class IntercomButtonTests(unittest.TestCase):
     def setUp(self) -> None:
         main.worker_manager.host = "worker.local"
         main.worker_manager.last_used_at = None
-        FakeWorkerAsyncClient.response = httpx.Response(200, json={"ok": True})
+        FakeWorkerAsyncClient.response = httpx.Response(
+            200, json={"action": "listening_started"}
+        )
         FakeWorkerAsyncClient.request_url = None
 
     def test_worker_online_requests_listen_start(self) -> None:
@@ -64,12 +66,12 @@ class IntercomButtonTests(unittest.TestCase):
         wake.assert_not_called()
 
     def test_worker_offline_sends_wake(self) -> None:
-        listen_start = AsyncMock(return_value=True)
+        listen_start = AsyncMock(return_value={"action": "listening_started"})
         with patch.object(main.worker_manager, "is_online", return_value=False), patch.object(
             main.worker_manager,
             "wake",
         ) as wake, patch(
-            "app.main._request_worker_listen_start",
+            "app.main._request_worker_listen",
             listen_start,
         ):
             response = asyncio.run(self._post_button_press())
@@ -87,20 +89,24 @@ class IntercomButtonTests(unittest.TestCase):
         listen_start.assert_not_awaited()
 
     def test_worker_listen_start_error_returns_502(self) -> None:
-        listen_start = AsyncMock(return_value=False)
+        listen_start = AsyncMock(
+            side_effect=main.HTTPException(
+                status_code=502, detail="worker listen request failed"
+            )
+        )
         with patch.object(main.worker_manager, "is_online", return_value=True), patch.object(
             main.worker_manager,
             "wake",
         ) as wake, patch(
-            "app.main._request_worker_listen_start",
+            "app.main._request_worker_listen",
             listen_start,
         ):
             response = asyncio.run(self._post_button_press())
 
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["detail"], "worker listen start failed")
+        self.assertEqual(response.json()["detail"], "worker listen request failed")
         self.assertIsNone(main.worker_manager.last_used_at)
-        listen_start.assert_awaited_once_with()
+        listen_start.assert_awaited_once_with("POST", "/listen/start")
         wake.assert_not_called()
 
     async def _post_button_press(self) -> httpx.Response:
