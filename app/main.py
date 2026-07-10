@@ -209,6 +209,33 @@ async def get_intercom_last_audio() -> Response:
     return Response(content=worker_response.content, media_type="audio/wav")
 
 
+@app.post("/intercom/listen/upload")
+async def upload_intercom_audio(request: Request) -> Response:
+    if not worker_manager.is_online():
+        raise HTTPException(status_code=503, detail="worker_offline")
+
+    body = await request.body()
+    content_type = request.headers.get("content-type")
+    headers = {"content-type": content_type} if content_type else None
+
+    try:
+        async with httpx.AsyncClient(timeout=WORKER_PROXY_TIMEOUT_SECONDS) as client:
+            worker_response = await client.post(
+                _worker_api_url("/listen/upload"),
+                content=body,
+                headers=headers,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="worker did not respond") from exc
+
+    worker_manager.mark_used()
+    return Response(
+        content=worker_response.content,
+        status_code=worker_response.status_code,
+        headers=_response_headers(worker_response.headers),
+    )
+
+
 async def _start_intercom_listening() -> dict[str, object]:
     if worker_manager.is_online():
         result = await _request_worker_listen("POST", "/listen/start")

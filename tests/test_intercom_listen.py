@@ -12,6 +12,7 @@ ORIGINAL_ASYNC_CLIENT = httpx.AsyncClient
 class FakeWorkerAsyncClient:
     response = httpx.Response(200, json={"action": "listening_started"})
     request_method: str | None = None
+    request_kwargs: dict[str, object] | None = None
     request_url: str | None = None
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -23,8 +24,9 @@ class FakeWorkerAsyncClient:
     async def __aexit__(self, *args: object) -> None:
         pass
 
-    async def post(self, url: str) -> httpx.Response:
+    async def post(self, url: str, **kwargs: object) -> httpx.Response:
         type(self).request_method = "POST"
+        type(self).request_kwargs = kwargs
         type(self).request_url = url
         return type(self).response
 
@@ -42,6 +44,7 @@ class IntercomListenTests(unittest.TestCase):
             200, json={"action": "listening_started"}
         )
         FakeWorkerAsyncClient.request_method = None
+        FakeWorkerAsyncClient.request_kwargs = None
         FakeWorkerAsyncClient.request_url = None
 
     def test_start_worker_online(self) -> None:
@@ -138,6 +141,44 @@ class IntercomListenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "worker_offline")
 
+    def test_upload_worker_online_forwards_file(self) -> None:
+        FakeWorkerAsyncClient.response = httpx.Response(
+            200,
+            json={
+                "action": "upload_processed",
+                "transcript": "hei",
+                "answer": "terve",
+                "audio_ready": True,
+            },
+        )
+
+        with patch.object(main.worker_manager, "is_online", return_value=True), patch(
+            "app.main.httpx.AsyncClient", FakeWorkerAsyncClient
+        ):
+            response = asyncio.run(self._upload(b"RIFF audio bytes"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["action"], "upload_processed")
+        self.assertEqual(
+            FakeWorkerAsyncClient.request_url,
+            "http://worker.local:8000/listen/upload",
+        )
+        self.assertIn(b'filename="recording.wav"', FakeWorkerAsyncClient.request_kwargs["content"])
+        self.assertIn(b"RIFF audio bytes", FakeWorkerAsyncClient.request_kwargs["content"])
+        self.assertTrue(
+            FakeWorkerAsyncClient.request_kwargs["headers"]["content-type"].startswith(
+                "multipart/form-data; boundary="
+            )
+        )
+        self.assertIsNotNone(main.worker_manager.last_used_at)
+
+    def test_upload_worker_offline_returns_503(self) -> None:
+        with patch.object(main.worker_manager, "is_online", return_value=False):
+            response = asyncio.run(self._upload(b"RIFF audio bytes"))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "worker_offline")
+
     def _request_with_worker_online(self, method: str, path: str) -> httpx.Response:
         with patch.object(main.worker_manager, "is_online", return_value=True), patch(
             "app.main.httpx.AsyncClient", FakeWorkerAsyncClient
@@ -150,6 +191,16 @@ class IntercomListenTests(unittest.TestCase):
             transport=transport, base_url="http://testserver"
         ) as client:
             return await client.request(method, path)
+
+    async def _upload(self, content: bytes) -> httpx.Response:
+        transport = httpx.ASGITransport(app=main.app)
+        async with ORIGINAL_ASYNC_CLIENT(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            return await client.post(
+                "/intercom/listen/upload",
+                files={"file": ("recording.wav", content, "audio/wav")},
+            )
 
 
 if __name__ == "__main__":
