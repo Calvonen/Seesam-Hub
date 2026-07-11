@@ -166,6 +166,31 @@ async def intercom_button_pressed() -> dict[str, object]:
     }
 
 
+@app.post("/intercom/worker/wake")
+async def wake_intercom_worker() -> dict[str, object]:
+    if worker_manager.is_online():
+        return {"ok": True, "action": "worker_already_online"}
+
+    try:
+        worker_manager.wake()
+    except WorkerManagerError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"ok": True, "action": "worker_wake_sent"}
+
+
+@app.post("/intercom/worker/shutdown")
+async def shutdown_intercom_worker() -> dict[str, object]:
+    if not worker_manager.is_online():
+        return {"ok": True, "action": "worker_already_offline"}
+
+    worker_response = await _proxy_worker_request("/system/shutdown")
+    if worker_response.status_code < 200 or worker_response.status_code >= 300:
+        raise HTTPException(status_code=502, detail="worker shutdown request failed")
+
+    return {"ok": True, "action": "worker_shutdown_sent"}
+
+
 @app.post("/intercom/listen/start")
 async def start_intercom_listening() -> dict[str, object]:
     return await _start_intercom_listening()
